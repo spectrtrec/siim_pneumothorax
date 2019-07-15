@@ -102,3 +102,13 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# folders
+pneumotorax128/
+pneumotorax256/
+siim-png-images/
+.vscode
+# files
+*.csv
+*.model
+efficientnet
