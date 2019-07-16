@@ -77,12 +77,10 @@ import os
 from PIL import Image
 
 
-def train(list_train, list_valid, model, epoch, batch_size):
+def train(list_train, list_valid, model, epoch, batch_size, fold):
     epochs = epoch
-    swa = SWA("./keras_swa.model", epoch - 1)
-    snapshot = SnapshotCallbackBuilder(
-        swa, nb_epochs=epochs, nb_snapshots=1, init_lr=1e-3
-    )
+    swa = SWA(f"models/keras_swa_{fold}.model", epoch - 1)
+    snapshot = SnapshotCallbackBuilder(swa, epochs, 1, fold, init_lr=1e-4)
     training_generator = DataGenerator(
         list_train,
         "pneumotorax256/train/",
@@ -118,30 +116,49 @@ if __name__ == "__main__":
         for filename in os.listdir(os.path.join(os.getcwd(), "pneumotorax256/test"))
     ]
     df_test = pd.DataFrame(test_files, columns=["id"])
+    epoch = 15
+    best_thres = []
+    for fold in [0, 1, 2, 3, 4]:
+        print("-----fold-----")
+        print(fold)
+        df_train = df[df.fold != fold].copy().reset_index(drop=True)
+        df_valid = df[df.fold == fold].copy().reset_index(drop=True)
 
-    df_train = df[df.fold != 0].copy().reset_index(drop=True)
-    df_valid = df[df.fold == 0].copy().reset_index(drop=True)
-    epoch = 120
-    if debug:
-        df_train = df_train.iloc[:60]
-        df_valid = df_train.iloc[:60]
-        df_test = df_test.iloc[:60]
-        epoch = 2
-    K.clear_session()
-    model = UEfficientNet(input_shape=(256, 256, 3), dropout_rate=0.25)
-    model.compile(loss=bce_dice_loss, optimizer="adam", metrics=[my_iou_metric])
-    train(df_train["id"].values, df_valid["id"].values, model, epoch, 10)
-    try:
-        print("using swa weight model")
-        model.load_weights("./keras_swa.model")
-    except Exception as e:
-        print(e)
-        model.load_weights("./keras.model")
+        if debug:
+            df_train = df[df.fold != 0].copy().reset_index(drop=True)
+            df_valid = df[df.fold == 0].copy().reset_index(drop=True)
+            df_train = df_train.iloc[:60]
+            df_valid = df_train.iloc[:60]
+            df_test = df_test.iloc[:60]
+            epoch = 2
+        K.clear_session()
+        model = UEfficientNet(input_shape=(256, 256, 3), dropout_rate=0.35)
+        model.compile(loss=bce_dice_loss, optimizer="adam", metrics=[my_iou_metric])
+        train(df_train["id"].values, df_valid["id"].values, model, epoch, 10, fold)
+        try:
+            print("using swa weight model")
+            model.load_weights(f"models/keras_swa_{fold}.model")
+        except Exception as e:
+            print(e)
+            model.load_weights(f"models/keras_{fold}.model")
 
-    val_predict = predict_validation_result(model, df_valid["id"].values, 10, 256)
-    best_thresh = prderict_best_threshhold(
-        df_valid["id"].values, "pneumotorax256/masks/", val_predict, 256
-    )
-    predict_result(
-        model, df_test["id"].values, "pneumotorax256/test/", 256, best_thresh, 10
-    )
+        val_predict = predict_validation_result(model, df_valid["id"].values, 10, 256)
+        best_thresh = prderict_best_threshhold(
+            df_valid["id"].values, "pneumotorax256/masks/", val_predict, 256
+        )
+        best_thres.append(best_thresh)
+        predict = predict_result(
+            model,
+            df_test["id"].values,
+            "pneumotorax256/test/",
+            256,
+            best_thresh,
+            10,
+            fold,
+        )
+        if fold == 0:
+            preds_test = predict
+        else:
+            preds_test += predict
+    preds_test /= 5
+    submit(preds_test, df_test["id"].values, 5, max(best_thres))
