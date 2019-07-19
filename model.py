@@ -1,24 +1,7 @@
-import gc
-import glob
-import os
-import shutil
-
 import keras
-import keras.backend as K
 import keras.callbacks as callbacks
-import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-import seaborn as sns
-import tensorflow as tf
-from keras import Model
-from keras import backend as K
-from keras import constraints, initializers, optimizers, regularizers
-from keras.applications.xception import Xception
-from keras.callbacks import Callback, ModelCheckpoint
-from keras.engine import InputSpec
-from keras.engine.topology import Input, get_source_inputs
-from keras.engine.training import Model
+from keras.callbacks import Callback, ModelCheckpoint, ReduceLROnPlateau
 from keras.layers import (
     Activation,
     Add,
@@ -40,35 +23,95 @@ from keras.layers import (
     multiply,
 )
 from keras.layers.convolutional import Conv2D, Conv2DTranspose, UpSampling2D
-from keras.layers.core import Activation, Dense, Lambda, SpatialDropout2D
 from keras.layers.merge import add, concatenate
 from keras.layers.normalization import BatchNormalization
 from keras.layers.pooling import MaxPooling2D
-from keras.legacy import interfaces
-from keras.losses import binary_crossentropy
-from keras.optimizers import SGD
-from keras.preprocessing.image import ImageDataGenerator, load_img
-from keras.regularizers import l2
-from keras.utils import conv_utils
-from keras.utils.data_utils import get_file
-from keras.utils.generic_utils import get_custom_objects
-from PIL import Image
-from skimage.transform import resize
-from sklearn.model_selection import StratifiedKFold, train_test_split
-from tqdm import tqdm_notebook
-
 from efficientnet import EfficientNetB4
+from keras.engine.training import Model
+from keras.layers import SpatialDropout2D, Conv2D
+from segmentation_models import Unet
+
+
+def unet_resnext_50(input_shape, freeze_encoder):
+    resnet_base, hyper_list = Unet(
+        backbone_name="resnext50",
+        input_shape=input_shape,
+        input_tensor=None,
+        encoder_weights="imagenet",
+        freeze_encoder=freeze_encoder,
+        skip_connections="default",
+        decoder_block_type="transpose",
+        decoder_filters=(128, 64, 32, 16, 8),
+        decoder_use_batchnorm=True,
+        n_upsample_blocks=5,
+        upsample_rates=(2, 2, 2, 2, 2),
+        classes=1,
+        activation="sigmoid",
+    )
+
+    x = SpatialDropout2D(0.2)(resnet_base.output)
+    x = Conv2D(1, (1, 1), activation="sigmoid", name="prediction")(x)
+
+    model = Model(resnet_base.input, x)
+
+    return model
+
+
+def unet_resnext_50_lovasz(input_shape, freeze_encoder):
+    resnet_base, hyper_list = Unet(
+        backbone_name="resnext50",
+        input_shape=input_shape,
+        input_tensor=None,
+        encoder_weights="imagenet",
+        freeze_encoder=freeze_encoder,
+        skip_connections="default",
+        decoder_block_type="transpose",
+        decoder_filters=(128, 64, 32, 16, 8),
+        decoder_use_batchnorm=True,
+        n_upsample_blocks=5,
+        upsample_rates=(2, 2, 2, 2, 2),
+        classes=1,
+        activation="sigmoid",
+    )
+
+    x = SpatialDropout2D(0.2)(resnet_base.output)
+    x = Conv2D(1, (1, 1), name="prediction")(x)
+
+    model = Model(resnet_base.input, x)
+
+    return model
 
 
 class SnapshotCallbackBuilder:
-    def __init__(self, swa, nb_epochs, nb_snapshots, fold, init_lr=0.1):
+    def __init__(
+        self,
+        swa,
+        nb_epochs,
+        nb_snapshots,
+        fold,
+        reduce_lr_factor=0.25,
+        reduce_lr_patience=10,
+        reduce_lr_min=0.00000625,
+        init_lr=0.0001,
+    ):
         self.T = nb_epochs
         self.M = nb_snapshots
         self.alpha_zero = init_lr
         self.swa = swa
         self.fold = fold
+        self.reduce_lr_factor = reduce_lr_factor
+        self.reduce_lr_patience = reduce_lr_patience
+        self.reduce_lr_min = reduce_lr_min
 
     def get_callbacks(self, model_prefix="Model"):
+        reduce_lr = ReduceLROnPlateau(
+            monitor="val_my_iou_metric",
+            factor=self.reduce_lr_factor,
+            patience=self.reduce_lr_patience,
+            min_lr=self.reduce_lr_min,
+            verbose=1,
+            mode="max",
+        )
         callback_list = [
             callbacks.ModelCheckpoint(
                 f"models/keras_{self.fold}.model",
@@ -79,12 +122,11 @@ class SnapshotCallbackBuilder:
             ),
             self.swa,
             callbacks.LearningRateScheduler(schedule=self._cosine_anneal_schedule),
+            # reduce_lr,
         ]
-
         return callback_list
 
     def _cosine_anneal_schedule(self, t):
-        # t - 1 is used when t has 1-based indexing.
         cos_inner = np.pi * (t % (self.T // self.M))
         cos_inner /= self.T // self.M
         cos_out = np.cos(cos_inner) + 1

@@ -106,9 +106,11 @@ venv.bak/
 # folders
 pneumotorax128/
 pneumotorax256/
+pneumotorax512/
 siim-png-images/
 .vscode
 # files
 *.csv
 *.model
 efficientnet
+.idea

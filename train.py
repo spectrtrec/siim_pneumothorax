@@ -1,124 +1,73 @@
-from losses import *
+import argparse
+import os
+import sys
+
+import pandas as pd
+from keras import backend as K
+
 from augmentations import *
+from losses import *
 from model import *
 from siim_data_loader import *
 from utils import *
 
-import numpy as np
-import pandas as pd
-import gc
-import keras
-
-import matplotlib.pyplot as plt
-import seaborn as sns
-
-
-from sklearn.model_selection import train_test_split, StratifiedKFold
-
-from skimage.transform import resize
-import tensorflow as tf
-import keras.backend as K
-from keras.losses import binary_crossentropy
-
-from keras.preprocessing.image import load_img
-from keras import Model
-from keras.callbacks import ModelCheckpoint
-from keras.layers import (
-    Input,
-    Conv2D,
-    Conv2DTranspose,
-    MaxPooling2D,
-    concatenate,
-    Dropout,
-    BatchNormalization,
-)
-from keras.layers import Conv2D, Concatenate, MaxPooling2D
-from keras.layers import UpSampling2D, Dropout, BatchNormalization
-from tqdm import tqdm_notebook
-from keras import initializers
-from keras import regularizers
-from keras import constraints
-from keras.utils import conv_utils
-from keras.utils.data_utils import get_file
-from keras.engine.topology import get_source_inputs
-from keras.engine import InputSpec
-from keras import backend as K
-from keras.layers import LeakyReLU
-from keras.layers import ZeroPadding2D
-from keras.losses import binary_crossentropy
-import keras.callbacks as callbacks
-from keras.callbacks import Callback
-from keras.applications.xception import Xception
-from keras.layers import multiply
+parser = argparse.ArgumentParser()
+parser.add_argument("--fine_size", default=512, type=int, help="Resized image size")
+parser.add_argument("--batch_size", default=5, type=int, help="Batch size for training")
+parser.add_argument("--train_path", default="pneumotorax512/train/", help="train path")
+parser.add_argument("--masks_path", default="pneumotorax512/masks/", help="mask path")
+parser.add_argument("--test_path", default="pneumotorax512/test/", help="test path")
+parser.add_argument("--epoch", default=60, type=int, help="Number of training epochs")
+parser.add_argument("--swa_epoch", default=60, type=int, help="Number of swa epochs")
+parser.add_argument("--debug", default=False, type=bool, help="Debug")
+args = parser.parse_args()
 
 
-from keras import optimizers
-from keras.legacy import interfaces
-from keras.utils.generic_utils import get_custom_objects
-
-from keras.engine.topology import Input
-from keras.engine.training import Model
-from keras.layers.convolutional import Conv2D, UpSampling2D, Conv2DTranspose
-from keras.layers.core import Activation, SpatialDropout2D
-from keras.layers.merge import concatenate
-from keras.layers.normalization import BatchNormalization
-from keras.layers.pooling import MaxPooling2D
-from keras.layers import Input, Dropout, BatchNormalization, Activation, Add
-from keras.regularizers import l2
-from keras.layers.core import Dense, Lambda
-from keras.layers.merge import concatenate, add
-from keras.layers import GlobalAveragePooling2D, Reshape, Dense, multiply, Permute
-from keras.optimizers import SGD
-from keras.preprocessing.image import ImageDataGenerator
-
-import glob
-import shutil
-import os
-from PIL import Image
-
-
-def train(list_train, list_valid, model, epoch, batch_size, fold):
-    epochs = epoch
-    swa = SWA(f"models/keras_swa_{fold}.model", epoch - 1)
-    snapshot = SnapshotCallbackBuilder(swa, epochs, 1, fold, init_lr=1e-4)
+def train(
+    list_train,
+    list_valid,
+    train_path,
+    masks_path,
+    model,
+    epoch,
+    batch_size,
+    fold,
+    imh_size,
+    swa_epoch
+):
+    print(train_path)
+    print(masks_path)
+    print(swa_epoch)
+    swa = SWA(f"models/keras_swa_{fold}.model", swa_epoch)
+    snapshot = SnapshotCallbackBuilder(swa, epoch, 1, fold)
     training_generator = DataGenerator(
-        list_train,
-        "pneumotorax256/train/",
-        "pneumotorax256/masks/",
-        AUGMENTATIONS_TRAIN,
-        batch_size,
-        256,
+        list_train, train_path, masks_path, AUGMENTATIONS_TRAIN, batch_size, imh_size
     )
     validation_generator = DataGenerator(
-        list_valid,
-        "pneumotorax256/train/",
-        "pneumotorax256/masks/",
-        AUGMENTATIONS_TEST,
-        batch_size,
-        256,
+        list_valid, train_path, masks_path, AUGMENTATIONS_TEST, batch_size, imh_size
     )
 
     history = model.fit_generator(
         generator=training_generator,
         validation_data=validation_generator,
         use_multiprocessing=False,
-        epochs=epochs,
+        epochs=epoch,
         verbose=2,
         callbacks=snapshot.get_callbacks(),
     )
 
 
 if __name__ == "__main__":
-    debug = False
+    debug = args.debug
     df = pd.read_csv("train_proc_v2_gr.csv")
     test_files = [
         os.path.splitext(filename)[0]
-        for filename in os.listdir(os.path.join(os.getcwd(), "pneumotorax256/test"))
+        for filename in os.listdir(os.path.join(os.getcwd(), args.test_path))
     ]
     df_test = pd.DataFrame(test_files, columns=["id"])
-    epoch = 15
-    best_thres = []
-    for fold in [0, 1, 2, 3, 4]:
+    epoch = args.epoch
+    list_thresh = []
+    for fold in [0]:
         print("-----fold-----")
         print(fold)
         df_train = df[df.fold != fold].copy().reset_index(drop=True)
@@ -131,10 +80,24 @@ if __name__ == "__main__":
             df_valid = df_train.iloc[:60]
             df_test = df_test.iloc[:60]
             epoch = 2
+
         K.clear_session()
-        model = UEfficientNet(input_shape=(256, 256, 3), dropout_rate=0.35)
+        model = UEfficientNet(
+            input_shape=(args.fine_size, args.fine_size, 3), dropout_rate=0.25
+        )
         model.compile(loss=bce_dice_loss, optimizer="adam", metrics=[my_iou_metric])
-        train(df_train["id"].values, df_valid["id"].values, model, epoch, 10, fold)
+        train(
+            df_train["id"].values,
+            df_valid["id"].values,
+            args.train_path,
+            args.masks_path,
+            model,
+            epoch,
+            args.batch_size,
+            fold,
+            args.fine_size,
+            args.swa_epoch
+        )
         try:
             print("using swa weight model")
             model.load_weights(f"models/keras_swa_{fold}.model")
@@ -142,23 +105,31 @@ if __name__ == "__main__":
             print(e)
             model.load_weights(f"models/keras_{fold}.model")
 
-        val_predict = predict_validation_result(model, df_valid["id"].values, 10, 256)
-        best_thresh = prderict_best_threshhold(
-            df_valid["id"].values, "pneumotorax256/masks/", val_predict, 256
+        val_predict = predict_validation_result(
+            model,
+            args.train_path,
+            args.masks_path,
+            df_valid["id"].values,
+            args.batch_size,
+            args.fine_size,
         )
-        best_thres.append(best_thresh)
+        best_threshhold = prderict_best_threshhold(
+            df_valid["id"].values, args.masks_path, val_predict, args.fine_size
+        )
+        list_thresh.append(best_threshhold)
         predict = predict_result(
             model,
             df_test["id"].values,
-            "pneumotorax256/test/",
-            256,
-            best_thresh,
-            10,
+            args.test_path,
+            args.fine_size,
+            best_threshhold,
+            args.batch_size,
             fold,
         )
         if fold == 0:
             preds_test = predict
         else:
             preds_test += predict
-    preds_test /= 5
-    submit(preds_test, df_test["id"].values, 5, max(best_thres))
+    preds_test /= 1
+    print(list_thresh)
+    submit(preds_test, df_test["id"].values, 3, max(list_thresh))

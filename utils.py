@@ -5,11 +5,13 @@ from augmentations import *
 from masks import *
 
 
-def predict_validation_result(model, list_valid, batch_size, img_size):
+def predict_validation_result(
+    model, path_train, path_mask, list_valid, batch_size, img_size
+):
     validation_generator = DataGenerator(
         list_valid,
-        "pneumotorax256/train/",
-        "pneumotorax256/masks/",
+        path_train,
+        path_mask,
         AUGMENTATIONS_TEST,
         batch_size,
         img_size,
