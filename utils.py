@@ -28,20 +28,16 @@ def predict_result(
     model, test_list, image_path, img_size, threshold_best, batch_size, fold
 ):
     x_test = [
-        cv2.resize(
-            np.array(Image.open(os.path.join(os.getcwd(), image_path) + fn + ".png")),
-            (img_size, img_size),
-        )
+        np.array(Image.open(os.path.join(os.getcwd(), image_path) + fn + ".png"))
         for fn in test_list
     ]
     x_test = np.array(x_test)
     x_test = np.array([np.repeat(im[..., None], 3, 2) for im in x_test])
-    print(x_test.shape)
     preds_test = model.predict(x_test, batch_size=batch_size)
     return preds_test
 
 
-def submit(preds_test, test_list, fold, threshold_best):
+def submit(preds_test, test_list, model, threshold_best):
     rles = []
     for p in tqdm_notebook(preds_test):
         p = p.squeeze()
@@ -55,23 +51,17 @@ def submit(preds_test, test_list, fold, threshold_best):
     sub_df = pd.DataFrame({"ImageId": test_list, "EncodedPixels": rles})
     sub_df.loc[sub_df.EncodedPixels == "", "EncodedPixels"] = "-1"
     sub_df.to_csv(
-        os.path.join(os.getcwd(), "submissions/", f"submission_{fold}.csv"), index=False
+        os.path.join(os.getcwd(), "submissions/", f"submission_{model}.csv"), index=False
     )
 
 
 def prderict_best_threshhold(validation_list, image_path, preds_valid, img_size):
     y_valid_ori = np.array(
         [
-            cv2.resize(
-                np.array(
-                    Image.open(os.path.join(os.getcwd(), image_path) + fn + ".png")
-                ),
-                (img_size, img_size),
-            )
+            np.array(Image.open(os.path.join(os.getcwd(), image_path) + fn + ".png"))
             for fn in validation_list
         ]
     )
-    assert y_valid_ori.shape == preds_valid.shape
     thresholds = np.linspace(0.2, 0.9, 31)
     ious = np.array(
         [

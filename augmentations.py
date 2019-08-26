@@ -1,30 +1,21 @@
-from albumentations import (
-    CLAHE,
-    Blur,
-    CenterCrop,
-    Compose,
-    ElasticTransform,
-    GaussNoise,
-    GridDistortion,
-    HorizontalFlip,
-    HueSaturationValue,
-    IAAAdditiveGaussianNoise,
-    JpegCompression,
-    MedianBlur,
-    MotionBlur,
-    OneOf,
-    OpticalDistortion,
-    RandomBrightness,
-    RandomContrast,
-    RandomGamma,
-    RGBShift,
-    ShiftScaleRotate,
-    ToFloat,
-    RandomSizedCrop
-)
+import cv2
+from albumentations import (CLAHE, Blur, CenterCrop, Compose, ElasticTransform,
+                            GaussNoise, GridDistortion, HorizontalFlip,
+                            HueSaturationValue, IAAAdditiveGaussianNoise,
+                            JpegCompression, MedianBlur, MotionBlur, OneOf,
+                            OpticalDistortion, RandomBrightness,
+                            RandomContrast, RandomGamma, RandomSizedCrop,
+                            RGBShift, ShiftScaleRotate, ToFloat)
 
 AUGMENTATIONS_TRAIN = Compose([
     HorizontalFlip(p=0.5),
+    ShiftScaleRotate(
+                    shift_limit=0,
+                    scale_limit=0.1,
+                    rotate_limit=10,
+                    p=0.5,
+                    border_mode=cv2.BORDER_CONSTANT
+    ),
     OneOf([
         RandomContrast(),
         RandomGamma(),
@@ -36,8 +27,7 @@ AUGMENTATIONS_TRAIN = Compose([
         OpticalDistortion(distort_limit=2, shift_limit=0.5),
         ], p=0.3),
     ToFloat(max_value=1)
-],p=1)
-
+], p=1)
 
 
 AUGMENTATIONS_TEST = Compose([ToFloat(max_value=1)], p=1)
