@@ -378,7 +378,6 @@ def UEfficientNetV1(input_shape=(None, None, 3), dropout_rate=0.1):
 
 def get_network(network, input_shape, drop_out):
     if network == "UEfficientNetV2":
-        print("UEfficientNetV2")
         model = UEfficientNetV2(input_shape, drop_out)
         return model
     elif network == "UEfficientNetV1":
